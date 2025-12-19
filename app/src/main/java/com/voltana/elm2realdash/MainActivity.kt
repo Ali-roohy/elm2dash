@@ -16,6 +16,7 @@ import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import android.text.InputType
 import java.io.*
 import java.net.ServerSocket
 import java.net.Socket
@@ -34,9 +35,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var edtDeviceName: EditText
     private lateinit var btnStart: Button
     private lateinit var btnSendFile: Button
+    private lateinit var btnToggleFlow: Button
     private lateinit var txtLog: TextView
     private var txtStatus: TextView? = null
     private lateinit var chkEnableLog: CheckBox
+    private lateinit var edtFilterId: AutoCompleteTextView
+    private lateinit var btnClearFilter: Button
+    private lateinit var txtFreq: TextView
     private lateinit var scrollView: ScrollView
 
     // BT / TCP
@@ -78,6 +83,13 @@ class MainActivity : AppCompatActivity() {
     // هر ID → آخرین نمایش؛ ترتیب درج حفظ می‌شود
     private val canRows = LinkedHashMap<String, String>()
     private val MAX_CAN_ROWS = 512
+    private val knownIds = LinkedHashSet<String>()
+    private var filterSelectedId: String? = null
+    private val selectedTimestampsMs = ArrayDeque<Long>()
+    private val freqWindowMs = 5_000L
+    private lateinit var idSuggestionsAdapter: ArrayAdapter<String>
+    private val isFlowPaused = AtomicBoolean(false)
+    private val pauseLock = Object()
 
     // Permissions launcher
     private val requestPermissionsLauncher =
@@ -99,12 +111,36 @@ class MainActivity : AppCompatActivity() {
         edtDeviceName = findViewById(R.id.edtDeviceName)
         btnStart = findViewById(R.id.btnStart)
         btnSendFile = findViewById(R.id.btnSendFile)
+        btnToggleFlow = findViewById(R.id.btnToggleFlow)
         txtLog = findViewById(R.id.txtLog)
         chkEnableLog = findViewById(R.id.chkEnableLog)
+        edtFilterId = findViewById(R.id.edtFilterId)
+        btnClearFilter = findViewById(R.id.btnClearFilter)
+        txtFreq = findViewById(R.id.txtFreq)
         scrollView = findViewById(R.id.scrollView)
         txtCan = findViewById(R.id.txtCan)
         scrollCan = findViewById(R.id.scrollCan)
         txtStatus = null
+
+        idSuggestionsAdapter = ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, mutableListOf())
+        edtFilterId.setAdapter(idSuggestionsAdapter)
+        edtFilterId.threshold = 1
+        edtFilterId.setOnItemClickListener { _, _, position, _ ->
+            val id = idSuggestionsAdapter.getItem(position)
+            applyCanFilter(id)
+        }
+        // جلوگیری از تایپ و فقط انتخاب از لیست شناخته‌شده
+        edtFilterId.inputType = InputType.TYPE_NULL
+        edtFilterId.keyListener = null
+        edtFilterId.isCursorVisible = false
+        edtFilterId.setOnClickListener { if (idSuggestionsAdapter.count > 0) edtFilterId.showDropDown() }
+        edtFilterId.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus && idSuggestionsAdapter.count > 0) edtFilterId.showDropDown()
+        }
+        btnClearFilter.setOnClickListener { applyCanFilter(null) }
+        btnToggleFlow.setOnClickListener { toggleFlowPause() }
+        // اطمینان از اینکه شروع کار در حالت Play است
+        setFlowPaused(false)
 
         isUiLogEnabled = loadUiLogPreference()
         chkEnableLog.isChecked = isUiLogEnabled
@@ -146,6 +182,7 @@ class MainActivity : AppCompatActivity() {
         btnSendFile.setOnClickListener {
             sendLastLogFile()
         }
+        updateFlowButtonUI()
 
         appendLog("Ready.")
     }
@@ -612,6 +649,7 @@ class MainActivity : AppCompatActivity() {
             while (btSocket != null && btSocket!!.isConnected) {
                 val line = incomingLines.poll(2, TimeUnit.SECONDS) ?: continue
                 if (line.isBlank()) continue
+                waitWhilePaused()
                 appendLog("RX: $line")
                 updateCanLiveRow(line)
                 try { synchronized(fInput) { fInput.appendText(line + "\n") } } catch (_: Exception) {}
@@ -771,12 +809,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateCanLiveRow(raw: String, source: String = "") {
         val msg = parseCanRaw(raw) ?: return
-        val len = msg.dataBytes.size
-        val dataStr = if (len > 0) msg.dataBytes.joinToString(" ") else "-"
+        val dataStr = if (msg.dataBytes.isNotEmpty()) msg.dataBytes.joinToString(separator = "") else "-"
         val line = buildString {
-            append("ID ").append(msg.id)
-            append(" (").append(len).append(") ")
-            append(dataStr)
+            append(msg.id).append(' ').append(dataStr)
             if (source.isNotEmpty()) append("  (").append(source).append(')')
         }
 
@@ -787,6 +822,11 @@ class MainActivity : AppCompatActivity() {
                 var toRemove = canRows.size - MAX_CAN_ROWS
                 while (toRemove > 0 && it.hasNext()) { it.next(); it.remove(); toRemove-- }
             }
+            knownIds.add(msg.id)
+        }
+        maybeUpdateIdSuggestions(msg.id)
+        if (filterSelectedId != null && filterSelectedId.equals(msg.id, ignoreCase = true)) {
+            trackSelectedFrequency()
         }
         runOnUiThread { refreshCanView() }
     }
@@ -796,11 +836,94 @@ class MainActivity : AppCompatActivity() {
         // خط عنوان + خطوط به‌ترتیبِ اولین مشاهده
         val text = buildString {
             append("--- CAN Live (by ID) ---\n")
-            snapshot.forEach { append(it).append('\n') }
+            val filtered = filterSelectedId?.let { id ->
+                snapshot.filter { it.startsWith("$id ", ignoreCase = true) }
+            } ?: snapshot
+            if (filtered.isEmpty()) {
+                append("No data yet.\n")
+            } else {
+                filtered.forEach { append(it).append('\n') }
+            }
         }
         txtCan.text = text
         scrollCan.post { scrollCan.fullScroll(View.FOCUS_DOWN) } // اگر خواستی اسکرول نکند، این خط را بردار
+        updateFrequencyLabel()
     }
+
+    private fun maybeUpdateIdSuggestions(newId: String) {
+        if (idSuggestionsAdapter.getPosition(newId) >= 0) return
+        idSuggestionsAdapter.add(newId)
+        idSuggestionsAdapter.sort { a, b -> a.compareTo(b) }
+        idSuggestionsAdapter.notifyDataSetChanged()
+    }
+
+    private fun applyCanFilter(id: String?) {
+        filterSelectedId = id?.uppercase(Locale.US)
+        // فقط IDهایی که تا حالا دیده شده‌اند قابل انتخاب‌اند
+        val display = filterSelectedId?.takeIf { knownIds.contains(it) } ?: ""
+        filterSelectedId = display.ifEmpty { null }
+        edtFilterId.setText(filterSelectedId ?: "")
+        synchronized(selectedTimestampsMs) { selectedTimestampsMs.clear() }
+        // هر بار فیلتر عوض شد، مطمئن شو جریان متوقف نشده باشد
+        setFlowPaused(false)
+        updateFrequencyLabel()
+        refreshCanView()
+    }
+
+    private fun trackSelectedFrequency() {
+        val now = System.currentTimeMillis()
+        synchronized(selectedTimestampsMs) {
+            selectedTimestampsMs.addLast(now)
+            while (selectedTimestampsMs.isNotEmpty() && now - selectedTimestampsMs.first > freqWindowMs) {
+                selectedTimestampsMs.removeFirst()
+            }
+        }
+    }
+
+    private fun updateFrequencyLabel() {
+        val currentFilter = filterSelectedId
+        if (currentFilter.isNullOrEmpty()) {
+            txtFreq.text = "Freq: -"
+            return
+        }
+        val now = System.currentTimeMillis()
+        val count = synchronized(selectedTimestampsMs) {
+            while (selectedTimestampsMs.isNotEmpty() && now - selectedTimestampsMs.first > freqWindowMs) {
+                selectedTimestampsMs.removeFirst()
+            }
+            selectedTimestampsMs.size
+        }
+        val freqPerSec = count.toDouble() / (freqWindowMs / 1000.0)
+        txtFreq.text = "Freq ($currentFilter): ${"%.2f".format(freqPerSec)} /s"
+    }
+
+    private fun toggleFlowPause() {
+        setFlowPaused(isFlowPaused.get().not(), showToast = true)
+    }
+
+    private fun setFlowPaused(paused: Boolean, showToast: Boolean = false) {
+        isFlowPaused.set(paused)
+        synchronized(pauseLock) { pauseLock.notifyAll() }
+        updateFlowButtonUI()
+        if (showToast) {
+            Toast.makeText(
+                this,
+                if (paused) "دریافت/ارسال موقتاً متوقف شد." else "دریافت/ارسال از سر گرفته شد.",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    private fun updateFlowButtonUI() {
+        btnToggleFlow.text = if (isFlowPaused.get()) "Play" else "Pause"
+    }
+
+    private fun waitWhilePaused() {
+        while (isFlowPaused.get()) {
+            synchronized(pauseLock) { pauseLock.wait(200) }
+        }
+    }
+
     private fun isTcpUp(): Boolean {
         val c = tcpClient
         return isClientConnected &&
