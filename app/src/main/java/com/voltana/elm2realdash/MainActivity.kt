@@ -37,6 +37,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var txtLog: TextView
     private var txtStatus: TextView? = null
     private lateinit var chkEnableLog: CheckBox
+    private lateinit var edtFilterId: AutoCompleteTextView
+    private lateinit var btnClearFilter: Button
+    private lateinit var txtFreq: TextView
     private lateinit var scrollView: ScrollView
 
     // BT / TCP
@@ -78,6 +81,11 @@ class MainActivity : AppCompatActivity() {
     // هر ID → آخرین نمایش؛ ترتیب درج حفظ می‌شود
     private val canRows = LinkedHashMap<String, String>()
     private val MAX_CAN_ROWS = 512
+    private val knownIds = LinkedHashSet<String>()
+    private var filterSelectedId: String? = null
+    private val selectedTimestampsMs = ArrayDeque<Long>()
+    private val freqWindowMs = 5_000L
+    private lateinit var idSuggestionsAdapter: ArrayAdapter<String>
 
     // Permissions launcher
     private val requestPermissionsLauncher =
@@ -101,10 +109,27 @@ class MainActivity : AppCompatActivity() {
         btnSendFile = findViewById(R.id.btnSendFile)
         txtLog = findViewById(R.id.txtLog)
         chkEnableLog = findViewById(R.id.chkEnableLog)
+        edtFilterId = findViewById(R.id.edtFilterId)
+        btnClearFilter = findViewById(R.id.btnClearFilter)
+        txtFreq = findViewById(R.id.txtFreq)
         scrollView = findViewById(R.id.scrollView)
         txtCan = findViewById(R.id.txtCan)
         scrollCan = findViewById(R.id.scrollCan)
         txtStatus = null
+
+        idSuggestionsAdapter = ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, mutableListOf())
+        edtFilterId.setAdapter(idSuggestionsAdapter)
+        edtFilterId.threshold = 1
+        edtFilterId.setOnItemClickListener { _, _, position, _ ->
+            val id = idSuggestionsAdapter.getItem(position)
+            applyCanFilter(id)
+        }
+        edtFilterId.setOnDismissListener {
+            // When user types and presses enter without selecting from dropdown
+            val text = edtFilterId.text?.toString()?.trim()?.uppercase(Locale.US)
+            if (!text.isNullOrEmpty()) applyCanFilter(text)
+        }
+        btnClearFilter.setOnClickListener { applyCanFilter(null) }
 
         isUiLogEnabled = loadUiLogPreference()
         chkEnableLog.isChecked = isUiLogEnabled
@@ -775,7 +800,7 @@ class MainActivity : AppCompatActivity() {
         val dataStr = if (len > 0) msg.dataBytes.joinToString(" ") else "-"
         val line = buildString {
             append("ID ").append(msg.id)
-            append(" (").append(len).append(") ")
+            append(" ")
             append(dataStr)
             if (source.isNotEmpty()) append("  (").append(source).append(')')
         }
@@ -787,6 +812,11 @@ class MainActivity : AppCompatActivity() {
                 var toRemove = canRows.size - MAX_CAN_ROWS
                 while (toRemove > 0 && it.hasNext()) { it.next(); it.remove(); toRemove-- }
             }
+            knownIds.add(msg.id)
+        }
+        maybeUpdateIdSuggestions(msg.id)
+        if (filterSelectedId != null && filterSelectedId.equals(msg.id, ignoreCase = true)) {
+            trackSelectedFrequency()
         }
         runOnUiThread { refreshCanView() }
     }
@@ -796,10 +826,60 @@ class MainActivity : AppCompatActivity() {
         // خط عنوان + خطوط به‌ترتیبِ اولین مشاهده
         val text = buildString {
             append("--- CAN Live (by ID) ---\n")
-            snapshot.forEach { append(it).append('\n') }
+            val filtered = filterSelectedId?.let { id ->
+                snapshot.filter { it.contains("ID $id", ignoreCase = true) }
+            } ?: snapshot
+            if (filtered.isEmpty()) {
+                append("No data yet.\n")
+            } else {
+                filtered.forEach { append(it).append('\n') }
+            }
         }
         txtCan.text = text
         scrollCan.post { scrollCan.fullScroll(View.FOCUS_DOWN) } // اگر خواستی اسکرول نکند، این خط را بردار
+        updateFrequencyLabel()
+    }
+
+    private fun maybeUpdateIdSuggestions(newId: String) {
+        if (idSuggestionsAdapter.getPosition(newId) >= 0) return
+        idSuggestionsAdapter.add(newId)
+        idSuggestionsAdapter.sort { a, b -> a.compareTo(b) }
+        idSuggestionsAdapter.notifyDataSetChanged()
+    }
+
+    private fun applyCanFilter(id: String?) {
+        filterSelectedId = id?.uppercase(Locale.US)
+        edtFilterId.setText(filterSelectedId ?: "")
+        synchronized(selectedTimestampsMs) { selectedTimestampsMs.clear() }
+        updateFrequencyLabel()
+        refreshCanView()
+    }
+
+    private fun trackSelectedFrequency() {
+        val now = System.currentTimeMillis()
+        synchronized(selectedTimestampsMs) {
+            selectedTimestampsMs.addLast(now)
+            while (selectedTimestampsMs.isNotEmpty() && now - selectedTimestampsMs.first > freqWindowMs) {
+                selectedTimestampsMs.removeFirst()
+            }
+        }
+    }
+
+    private fun updateFrequencyLabel() {
+        val currentFilter = filterSelectedId
+        if (currentFilter.isNullOrEmpty()) {
+            txtFreq.text = "Freq: -"
+            return
+        }
+        val now = System.currentTimeMillis()
+        val count = synchronized(selectedTimestampsMs) {
+            while (selectedTimestampsMs.isNotEmpty() && now - selectedTimestampsMs.first > freqWindowMs) {
+                selectedTimestampsMs.removeFirst()
+            }
+            selectedTimestampsMs.size
+        }
+        val freqPerSec = count.toDouble() / (freqWindowMs / 1000.0)
+        txtFreq.text = "Freq ($currentFilter): ${"%.2f".format(freqPerSec)} /s"
     }
     private fun isTcpUp(): Boolean {
         val c = tcpClient
