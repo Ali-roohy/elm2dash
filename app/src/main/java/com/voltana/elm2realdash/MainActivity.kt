@@ -36,6 +36,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSendFile: Button
     private lateinit var txtLog: TextView
     private var txtStatus: TextView? = null
+    private lateinit var chkEnableLog: CheckBox
     private lateinit var scrollView: ScrollView
 
     // BT / TCP
@@ -57,6 +58,7 @@ class MainActivity : AppCompatActivity() {
     // --- UI log ring buffer & freeze control ---
     private val uiLines = ArrayDeque<String>(200)  // فقط ۱۰۰ خط آخر نگه می‌داریم؛ ظرفیت اضافی برای حذف
     private var isLogFrozen = false                // با لمس، True/False می‌شود
+    private var isUiLogEnabled = true              // می‌توان UI log را برای پرفورمنس خاموش کرد
     private val MAX_UI_LINES = 30
 
     // Reader queue (lines produced by background reader)
@@ -98,13 +100,24 @@ class MainActivity : AppCompatActivity() {
         btnStart = findViewById(R.id.btnStart)
         btnSendFile = findViewById(R.id.btnSendFile)
         txtLog = findViewById(R.id.txtLog)
+        chkEnableLog = findViewById(R.id.chkEnableLog)
         scrollView = findViewById(R.id.scrollView)
         txtCan = findViewById(R.id.txtCan)
         scrollCan = findViewById(R.id.scrollCan)
         txtStatus = null
 
+        isUiLogEnabled = loadUiLogPreference()
+        chkEnableLog.isChecked = isUiLogEnabled
+        applyUiLogMode(initial = true)
+        chkEnableLog.setOnCheckedChangeListener { _, isChecked ->
+            isUiLogEnabled = isChecked
+            saveUiLogPreference(isChecked)
+            applyUiLogMode(initial = false)
+        }
+
         // لمس روی txtLog با    عث Freeze/Resume می‌شود
         txtLog.setOnTouchListener { _, event ->
+            if (!isUiLogEnabled) return@setOnTouchListener false
             if (event.action == android.view.MotionEvent.ACTION_DOWN) {
                 isLogFrozen = !isLogFrozen
                 Toast.makeText(
@@ -191,19 +204,21 @@ class MainActivity : AppCompatActivity() {
         val now = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
         val line = "$now  $msg"
 
-        // به‌جای اضافه‌کردن مستقیم به TextView، اول در بافر نگه می‌داریم
-        synchronized(uiLines) {
-            uiLines.addLast(line)
-            // محدود به ۱۰۰ خط
-            while (uiLines.size > MAX_UI_LINES) uiLines.removeFirst()
-        }
+        if (isUiLogEnabled) {
+            // به‌جای اضافه‌کردن مستقیم به TextView، اول در بافر نگه می‌داریم
+            synchronized(uiLines) {
+                uiLines.addLast(line)
+                // محدود به ۱۰۰ خط
+                while (uiLines.size > MAX_UI_LINES) uiLines.removeFirst()
+            }
 
-        // اگر Freeze نیست، UI را از بافر بازنویسی کن و اسکرول را پایین نگه‌دار
-        if (!isLogFrozen) {
-            val now = System.currentTimeMillis()
-            if (now - lastUiUpdate > 30) {
-                lastUiUpdate = now
-                runOnUiThread { refreshLogViewFromBuffer() }
+            // اگر Freeze نیست، UI را از بافر بازنویسی کن و اسکرول را پایین نگه‌دار
+            if (!isLogFrozen) {
+                val now = System.currentTimeMillis()
+                if (now - lastUiUpdate > 30) {
+                    lastUiUpdate = now
+                    runOnUiThread { refreshLogViewFromBuffer() }
+                }
             }
         }
 
@@ -217,6 +232,7 @@ class MainActivity : AppCompatActivity() {
 
     // محتوی TextView را دقیقاً از بافر می‌سازد و به انتها اسکرول می‌کند
     private fun refreshLogViewFromBuffer() {
+        if (!isUiLogEnabled) return
         val snapshot: List<String> = synchronized(uiLines) { uiLines.toList() }
         txtLog.text = snapshot.joinToString("\n") + "\n"
         scrollView.post { scrollView.fullScroll(View.FOCUS_DOWN) }
@@ -230,9 +246,38 @@ class MainActivity : AppCompatActivity() {
         edtDeviceName.setText(saved)
     }
 
+    private fun loadUiLogPreference(): Boolean {
+        val sp = getSharedPreferences("config", Context.MODE_PRIVATE)
+        return sp.getBoolean("ui_log_enabled", true)
+    }
+
     private fun saveBTDeviceName(name: String) {
         val sp = getSharedPreferences("config", Context.MODE_PRIVATE)
         sp.edit().putString("bt_name", name).apply()
+    }
+
+    private fun saveUiLogPreference(enabled: Boolean) {
+        val sp = getSharedPreferences("config", Context.MODE_PRIVATE)
+        sp.edit().putBoolean("ui_log_enabled", enabled).apply()
+    }
+
+    private fun applyUiLogMode(initial: Boolean) {
+        if (!isUiLogEnabled) {
+            isLogFrozen = false
+            synchronized(uiLines) { uiLines.clear() }
+            txtLog.text = "UI Log خاموش است (برای فعال‌سازی، تیک را بزنید)."
+            txtLog.visibility = View.GONE
+            if (!initial) {
+                Toast.makeText(this, "UI Log خاموش شد تا هنگ و لگ کمتر شود.", Toast.LENGTH_SHORT)
+                    .show()
+            }
+        } else {
+            txtLog.visibility = View.VISIBLE
+            refreshLogViewFromBuffer()
+            if (!initial) {
+                Toast.makeText(this, "UI Log فعال شد.", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun getLocalIPv4s(): List<String> {
