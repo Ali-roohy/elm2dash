@@ -55,6 +55,14 @@
             android:layout_marginTop="8dp"
             android:padding="12dp" />
 
+        <Button
+            android:id="@+id/btnToggleFlow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Pause"
+            android:layout_marginTop="8dp"
+            android:padding="12dp" />
+
         <CheckBox
             android:id="@+id/chkEnableLog"
             android:layout_width="match_parent"
@@ -63,6 +71,29 @@
             android:text="نمایش UI Log (اختیاری، در صورت نیاز)"
             android:textColor="#000000"
             android:checked="true"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical">
+
+            <AutoCompleteTextView
+                android:id="@+id/edtFilterId"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:hint="Filter CAN ID (e.g. 123)"
+                android:inputType="text"
+                android:padding="8dp"/>
+
+            <Button
+                android:id="@+id/btnClearFilter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Clear"/>
+        </LinearLayout>
 
         <TextView
             android:id="@+id/txtLog"
@@ -96,6 +127,15 @@
                 android:textColor="#ffffff"
                 android:text="--- CAN Live (by ID) ---\n"/>
         </ScrollView>
+
+        <TextView
+            android:id="@+id/txtFreq"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Freq: -"
+            android:textSize="14sp"
+            android:textColor="#000000"/>
 
     </LinearLayout>
 </ScrollView>
