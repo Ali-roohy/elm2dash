@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.Elm2RealDash" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- تم خودت -->
+        <item name="android:forceDarkAllowed">false</item> <!-- API 29+ -->
+    </style>
+</resources>

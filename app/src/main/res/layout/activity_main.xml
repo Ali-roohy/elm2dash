@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/scrollView"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:background="#FFFFFF"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:orientation="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <TextView
+            android:id="@+id/txtStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingBottom="8dp"
+            android:text=""
+            android:textColor="#000000"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Bluetooth Device Name or MAC:"
+            android:textColor="#000000"
+            android:textSize="16sp" />
+
+        <EditText
+            android:id="@+id/edtDeviceName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="e.g. OBDII or 00:11:22:33:44:55"
+            android:textColor="#000000"
+            android:textColorHint="#666666"
+            android:padding="10dp"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btnStart"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Start Bridge"
+            android:layout_marginTop="12dp"
+            android:padding="12dp" />
+
+        <Button
+            android:id="@+id/btnSendFile"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Send RD Log Again"
+            android:layout_marginTop="8dp"
+            android:padding="12dp" />
+
+        <TextView
+            android:id="@+id/txtLog"
+            android:layout_width="match_parent"
+            android:layout_height="220dp"
+            android:background="#EEEEEE"
+            android:fontFamily="monospace"
+            android:lineSpacingExtra="2dp"
+            android:minHeight="260dp"
+            android:overScrollMode="ifContentScrolls"
+            android:padding="8dp"
+            android:scrollbars="vertical"
+            android:textIsSelectable="true" />
+
+        <ScrollView
+            android:id="@+id/scrollCan"
+            android:layout_width="match_parent"
+            android:layout_height="fill_parent"
+            android:fillViewport="true"
+            android:layout_marginTop="8dp">
+
+            <TextView
+                android:id="@+id/txtCan"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="12sp"
+                android:typeface="monospace"
+                android:padding="8dp"
+                android:scrollbars="vertical"
+                android:background="#101010"
+                android:textColor="#ffffff"
+                android:text="--- CAN Live (by ID) ---\n"/>
+        </ScrollView>
+
+    </LinearLayout>
+</ScrollView>
