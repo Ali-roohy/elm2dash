@@ -55,6 +55,15 @@
             android:layout_marginTop="8dp"
             android:padding="12dp" />
 
+        <CheckBox
+            android:id="@+id/chkEnableLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="نمایش UI Log (اختیاری، در صورت نیاز)"
+            android:textColor="#000000"
+            android:checked="true"/>
+
         <TextView
             android:id="@+id/txtLog"
             android:layout_width="match_parent"
